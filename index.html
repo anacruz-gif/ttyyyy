@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Control Electroválvula ESP32</title>
+
+<style>
+/* =========================
+   ESTILO ACTUALIZADO (ROSADO)
+========================= */
+body {
+    background: #fce4ec; /* Color rosita claro */
+    font-family: "Segoe UI", Arial;
+    color: #4a148c; /* Texto púrpura oscuro para contraste */
+    margin: 0;
+    text-align: center;
+}
+
+/* ---------- Encabezado ---------- */
+.header {
+    background: #f06292; /* Rosado más fuerte */
+    padding: 25px;
+    border-bottom: 4px solid #ad1457;
+    color: white;
+}
+
+.header h1 {
+    margin: 5px;
+    font-size: 24px;
+}
+
+.header h2 {
+    margin: 5px;
+    font-size: 18px;
+    color: #fce4ec;
+}
+
+/* ---------- Reloj ---------- */
+#reloj-contenedor {
+    background: white;
+    padding: 10px;
+    margin: 10px auto;
+    width: fit-content;
+    border-radius: 8px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+    font-weight: bold;
+    color: #ad1457;
+}
+
+/* ---------- Secciones ---------- */
+.section {
+    background: #ffffff;
+    width: 85%;
+    max-width: 700px;
+    margin: 25px auto;
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+
+/* ---------- LEDs ---------- */
+.led-panel {
+    display: flex;
+    justify-content: center;
+    gap: 100px;
+    margin-top: 20px;
+}
+
+.led {
+    width: 90px;
+    height: 90px;
+    border-radius: 50%;
+    background: #e0e0e0;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+    transition: 0.2s;
+}
+
+/* Encendidos */
+.green-on {
+    background: #66bb6a;
+    box-shadow: 0 0 30px #66bb6a;
+}
+
+.red-on {
+    background: #ef5350;
+    box-shadow: 0 0 30px #ef5350;
+}
+
+.label {
+    margin-top: 12px;
+    font-size: 14px;
+    color: #880e4f;
+    font-weight: bold;
+}
+
+/* ---------- Histórico ---------- */
+#historial {
+    height: 170px;
+    overflow-y: auto;
+    background: #fdf0f5;
+    border: 1px solid #f8bbd0;
+    padding: 10px;
+    font-size: 13px;
+    text-align: left;
+    color: #333;
+}
+
+/* ---------- Botón ---------- */
+button {
+    padding: 12px 30px;
+    background: #ec407a;
+    color: white;
+    border: none;
+    border-radius: 25px;
+    font-weight: bold;
+    cursor: pointer;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+button:hover {
+    background: #d81b60;
+}
+
+/* ---------- Estado BT ---------- */
+.estado {
+    margin-top: 10px;
+    font-weight: bold;
+    color: #c2185b;
+}
+</style>
+</head>
+
+<body>
+
+<div class="header">
+    <h1>INSTITUTO TECNOLOGICO UNIVERSITARIO VIDA NUEVA</h1>
+    <h2>Integrantes: ANA CRUZ, JOSE ROMERO</h2>
+    <h2>AUTOMATIZACION E INSTRUMENTACION</h2>
+</div>
+
+<div id="reloj-contenedor">
+    <span id="fecha-actual"></span> | <span id="hora-actual"></span>
+</div>
+
+<h2 style="margin-top:20px; color: #ad1457;">CONTROL DE ELECTROVÁLVULA</h2>
+
+
+<div class="section">
+    <div class="led-panel">
+        <div>
+            <div id="ledVerde" class="led"></div>
+            <div class="label">ACTIVADA</div>
+        </div>
+        <div>
+            <div id="ledRojo" class="led"></div>
+            <div class="label">DESACTIVADA</div>
+        </div>
+    </div>
+</div>
+
+
+<div class="section">
+    <h3 style="color:#ad1457;">Histórico de eventos</h3>
+    <div id="historial"></div>
+</div>
+
+
+<div class="section">
+    <h3 style="color:#ad1457;">Conexión Bluetooth</h3>
+    <button onclick="conectar()">Conectar ESP32</button>
+    <div id="estadoBT" class="estado">Desconectado</div>
+</div>
+
+
+<script>
+/* =========================
+   RELOJ EN TIEMPO REAL
+========================= */
+function actualizarReloj() {
+    const ahora = new Date();
+    const opcionesFecha = { day: '2-digit', month: '2-digit', year: 'numeric' };
+    document.getElementById('fecha-actual').innerText = ahora.toLocaleDateString('es-ES', opcionesFecha);
+    document.getElementById('hora-actual').innerText = ahora.toLocaleTimeString('es-ES');
+}
+setInterval(actualizarReloj, 1000);
+actualizarReloj();
+
+/* =========================
+   VARIABLES BLUETOOTH
+========================= */
+let device, characteristic;
+
+const ledVerde = document.getElementById("ledVerde");
+const ledRojo  = document.getElementById("ledRojo");
+const historial = document.getElementById("historial");
+const estadoBT = document.getElementById("estadoBT");
+
+const SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+const TX_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+
+/* =========================
+   CONECTAR BLUETOOTH
+========================= */
+async function conectar(){
+    try {
+        device = await navigator.bluetooth.requestDevice({
+            filters:[{ name:'ESP32_VALVULA' }],
+            optionalServices:[SERVICE_UUID]
+        });
+
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        characteristic = await service.getCharacteristic(TX_UUID);
+
+        await characteristic.startNotifications();
+
+        characteristic.addEventListener(
+            'characteristicvaluechanged',
+            recibirDato
+        );
+
+        estadoBT.innerText="Conectado";
+        estadoBT.style.color="#43a047";
+
+        device.addEventListener('gattserverdisconnected', ()=>{
+            estadoBT.innerText="Desconectado";
+            estadoBT.style.color="#c2185b";
+        });
+    } catch (error) {
+        console.log("Error de conexión: " + error);
+    }
+}
+
+
+/* =========================
+   RECIBIR DATOS DEL ESP32
+========================= */
+function recibirDato(event){
+    const data = new TextDecoder().decode(event.target.value);
+    if(data === "VALVULA:ON"){
+        activar();
+    }
+    else if(data === "VALVULA:OFF"){
+        desactivar();
+    }
+}
+
+
+/* =========================
+   FUNCIONES LED
+========================= */
+function activar(){
+    ledVerde.classList.add("green-on");
+    ledRojo.classList.remove("red-on");
+    agregarHistorial("Electroválvula ACTIVADA");
+}
+
+function desactivar(){
+    ledRojo.classList.add("red-on");
+    ledVerde.classList.remove("green-on");
+    agregarHistorial("Electroválvula DESACTIVADA");
+}
+
+
+/* =========================
+   HISTORICO
+========================= */
+function agregarHistorial(texto){
+    const hora = new Date().toLocaleTimeString();
+    historial.innerHTML = 
+        "<strong>["+hora+"]</strong> "+texto+"<br>" + historial.innerHTML;
+}
+
+</script>
+
+</body>
+</html>
